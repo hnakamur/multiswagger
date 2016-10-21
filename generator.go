@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"gopkg.in/yaml.v2"
+	"github.com/ghodss/yaml"
 
 	"github.com/goadesign/goa/design"
 	"github.com/goadesign/goa/goagen/codegen"
@@ -18,16 +18,18 @@ import (
 
 // Generator is the swagger code generator.
 type Generator struct {
-	API      *design.APIDefinition // The API definition
-	OutDir   string                // Path to output directory
-	genfiles []string              // Generated files
+	API        *design.APIDefinition // The API definition
+	OutDir     string                // Path to output directory
+	LocalesDir string                // Path to locales directory
+	genfiles   []string              // Generated files
 }
 
 // Generate is the generator entry point called by the meta generator.
 func Generate() (files []string, err error) {
-	var outDir, ver string
+	var outDir, localesDir, ver string
 	set := flag.NewFlagSet("swagger", flag.PanicOnError)
 	set.StringVar(&outDir, "out", "", "")
+	set.StringVar(&localesDir, "locales", "locales", "")
 	set.StringVar(&ver, "version", "", "")
 	set.String("design", "", "")
 	set.Parse(os.Args[1:])
@@ -36,7 +38,7 @@ func Generate() (files []string, err error) {
 		return nil, err
 	}
 
-	g := &Generator{OutDir: outDir, API: design.Design}
+	g := &Generator{OutDir: outDir, LocalesDir: localesDir, API: design.Design}
 
 	return g.Generate()
 }
@@ -63,39 +65,71 @@ func (g *Generator) Generate() (_ []string, err error) {
 	}
 	g.genfiles = append(g.genfiles, swaggerDir)
 
-	walk(swagger, appendKeys)
+	// JSON
+	rawJSON, err := json.Marshal(swagger)
+	if err != nil {
+		return nil, err
+	}
+	swaggerFile := filepath.Join(swaggerDir, "swagger.json")
+	if err := ioutil.WriteFile(swaggerFile, rawJSON, 0644); err != nil {
+		return nil, err
+	}
+	g.genfiles = append(g.genfiles, swaggerFile)
 
-	for key = range keys {
-		s, err := genswagger.New(g.API)
+	// YAML
+	rawYAML, err := yaml.JSONToYAML(rawJSON)
+	if err != nil {
+		return nil, err
+	}
+	swaggerFile = filepath.Join(swaggerDir, "swagger.yaml")
+	if err := ioutil.WriteFile(swaggerFile, rawYAML, 0644); err != nil {
+		return nil, err
+	}
+	g.genfiles = append(g.genfiles, swaggerFile)
+
+	localeFilePaths, err := filepath.Glob(filepath.Join(g.LocalesDir, "*.yaml"))
+	for _, localeFilePath := range localeFilePaths {
+		localeFilename := filepath.Base(localeFilePath)
+		locale := localeFilename[:len(localeFilename)-len(".yaml")]
+
+		rawLocaleYAML, err := ioutil.ReadFile(localeFilePath)
 		if err != nil {
 			return nil, err
 		}
-		extracted := walk(s, extract)
-		suffix := "." + key
+		rawLocaleJSON, err := yaml.YAMLToJSON(rawLocaleYAML)
+		if err != nil {
+			return nil, err
+		}
+		var localeJSON map[string]interface{}
+		if err = json.Unmarshal(rawLocaleJSON, &localeJSON); err != nil {
+			return nil, err
+		}
+
+		var mergedJSON map[string]interface{}
+		err = json.Unmarshal(rawJSON, &mergedJSON)
+		if err != nil {
+			return nil, err
+		}
+		mergeMapsRecursive(mergedJSON, localeJSON)
 
 		// JSON
-		rawJSON, err := json.Marshal(extracted)
+		mergedRawJSON, err := json.Marshal(mergedJSON)
 		if err != nil {
 			return nil, err
 		}
-		swaggerFile := filepath.Join(swaggerDir, fmt.Sprintf("swagger%s.json", suffix))
-		if err := ioutil.WriteFile(swaggerFile, rawJSON, 0644); err != nil {
+		swaggerFile = filepath.Join(swaggerDir, fmt.Sprintf("swagger.%s.json", locale))
+		if err := ioutil.WriteFile(swaggerFile, mergedRawJSON, 0644); err != nil {
 			return nil, err
 		}
 		g.genfiles = append(g.genfiles, swaggerFile)
 
 		// YAML
-		var yamlSource interface{}
-		if err = json.Unmarshal(rawJSON, &yamlSource); err != nil {
-			return nil, err
-		}
-
-		rawYAML, err := yaml.Marshal(yamlSource)
+		mergedRawYAML, err := yaml.JSONToYAML(mergedRawJSON)
 		if err != nil {
 			return nil, err
 		}
-		swaggerFile = filepath.Join(swaggerDir, fmt.Sprintf("swagger%s.yaml", suffix))
-		if err := ioutil.WriteFile(swaggerFile, rawYAML, 0644); err != nil {
+		swaggerFile := filepath.Join(swaggerDir, fmt.Sprintf("swagger.%s.yaml", locale))
+		if err := ioutil.WriteFile(swaggerFile, mergedRawYAML, 0644); err != nil {
 			return nil, err
 		}
 		g.genfiles = append(g.genfiles, swaggerFile)
@@ -111,105 +145,16 @@ func (g *Generator) Cleanup() {
 	g.genfiles = nil
 }
 
-var (
-	keys = make(map[string]bool)
-	key  string
-)
-
-func appendKeys(data *string) {
-	var unmarshaled interface{}
-	if err := json.Unmarshal([]byte(*data), &unmarshaled); err != nil {
-		return
-	}
-	asserted := unmarshaled.(map[string]interface{})
-	for k := range asserted {
-		keys[k] = true
-	}
-}
-
-func extract(data *string) {
-	if *data == "" {
-		return
-	}
-	var unmarshaled interface{}
-	if err := json.Unmarshal([]byte(*data), &unmarshaled); err != nil {
-		return
-	}
-	if len(keys) == 0 {
-		return
-	}
-	asserted := unmarshaled.(map[string]interface{})
-	value, ok := asserted[key]
-	if ok != true {
-		return
-	}
-	casted, ok := value.(string)
-	if ok != true {
-		return
-	}
-	*data = casted
-}
-
-func walk(s *genswagger.Swagger, function func(*string)) *genswagger.Swagger {
-	if s.Info != nil {
-		function(&s.Info.Description)
-	}
-	if s.Paths != nil {
-		for _, v := range s.Paths {
-			path, ok := v.(*genswagger.Path)
-			if ok != true {
+func mergeMapsRecursive(dest, src map[string]interface{}) {
+	for k, v := range src {
+		srcMap, srcIsMap := v.(map[string]interface{})
+		if srcIsMap {
+			destMap, destIsMap := dest[k].(map[string]interface{})
+			if destIsMap {
+				mergeMapsRecursive(destMap, srcMap)
 				continue
 			}
-			if path.Get != nil {
-				function(&path.Get.Description)
-			}
-			if path.Put != nil {
-				function(&path.Put.Description)
-			}
-			if path.Post != nil {
-				function(&path.Post.Description)
-			}
-			if path.Delete != nil {
-				function(&path.Delete.Description)
-			}
-			if path.Options != nil {
-				function(&path.Options.Description)
-			}
-			if path.Head != nil {
-				function(&path.Head.Description)
-			}
-			if path.Patch != nil {
-				function(&path.Patch.Description)
-			}
-			if path.Parameters != nil {
-				for _, parameter := range path.Parameters {
-					function(&parameter.Description)
-				}
-			}
 		}
+		dest[k] = v
 	}
-	if s.Parameters != nil {
-		for _, parameter := range s.Parameters {
-			function(&parameter.Description)
-		}
-	}
-	if s.Responses != nil {
-		for _, response := range s.Responses {
-			function(&response.Description)
-		}
-	}
-	if s.SecurityDefinitions != nil {
-		for _, security := range s.SecurityDefinitions {
-			function(&security.Description)
-		}
-	}
-	if s.Tags != nil {
-		for _, tag := range s.Tags {
-			function(&tag.Description)
-		}
-	}
-	if s.ExternalDocs != nil {
-		function(&s.ExternalDocs.Description)
-	}
-	return s
 }
