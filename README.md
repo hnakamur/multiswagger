@@ -1,51 +1,34 @@
-# Multiswagger
+# LocaleOverlaySwagger
 
-A [goa](https://github.com/goadesign/goa) plugin package to generate multiple swagger specification files.
-
-[![CircleCI](https://circleci.com/gh/tchssk/multiswagger.svg?style=shield&circle-token=7b399438f203142830a3a0bfd79e1d90d5cd9476)](https://circleci.com/gh/tchssk/multiswagger)
-[![license](https://img.shields.io/github/license/tchssk/multiswagger.svg)]()
+A [goa](https://github.com/goadesign/goa) plugin package to generate localized swagger specification files.
 
 ## Overview
 
-Multiswagger is compatible with internal swagger generator of goagen (`goagen swagger`) but it expects [apidsl.Description()](https://godoc.org/github.com/goadesign/goa/design/apidsl#Description) in design to be JSON object like below.
+Multiswagger is compatible with internal swagger generator of goagen (`goagen swagger`) but it expects additional locale YAML files to overlay fields like description.
 
-```go
-apidsl.Description(`{
-	"key1": "value1",
-	"key2": "value2"
-}`)
-```
+The path of locale YAML files are `locales/*.yaml`.
+For example, the path for the Japanese locale YAML is `locales/ja.yaml`.
+The locale YAML file contains only fields to overlay.
 
-Multiswagger generates `description: value1` as swagger.key1.json and swagger.key1.yaml, `description: value2` as swagger.key2.json and swagger.key2.yaml.
+Multiswagger generates `swagger.${locale}.json` and `swagger.${locale}.yaml` as well as the original `swagger.json` and `swagger.yaml`.
 
-### Use case
-
-This plugin can be used for i18n.
-
-```go
-apidsl.Description(`{
-	"en": "This is an english description.",
-	"ja": "これは日本語の説明です。"
-}`)
-```
+See https://github.com/hnakamur/goa-getting-started/tree/overlay_japanese_yaml for an example.
 
 ## Installation
 
 ```sh
-$ go get github.com/tchssk/multiswagger
+$ go get github.com/hnakmaur/localeoverlayswagger
 ```
 
 ## Usage
 
 
 ```sh
-$ goagen gen --pkg-path github.com/tchssk/multiswagger --design path/to/your/design
+$ goagen gen --pkg-path github.com/hnakmaur/localeoverlayswagger --design package/path/to/your/design
 ```
+
+Please add `--locales locales_dir` if your `locales_dir` is different from the default value `locales`.
 
 ## License
 
 MIT License
-
-## Author
-
-Taichi Sasaki
