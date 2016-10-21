@@ -7,11 +7,13 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v2"
 
 	"github.com/goadesign/goa/design"
 	"github.com/goadesign/goa/goagen/codegen"
+	"github.com/goadesign/goa/goagen/gen_schema"
 	"github.com/goadesign/goa/goagen/gen_swagger"
 	"github.com/goadesign/goa/goagen/utils"
 )
@@ -66,6 +68,7 @@ func (g *Generator) Generate() (_ []string, err error) {
 	walk(swagger, appendKeys)
 
 	for key = range keys {
+		genschema.Definitions = make(map[string]*genschema.JSONSchema)
 		s, err := genswagger.New(g.API)
 		if err != nil {
 			return nil, err
@@ -116,9 +119,18 @@ var (
 	key  string
 )
 
+const defaultViewSuffix = " (default view)"
+
 func appendKeys(data *string) {
+	if *data == "" {
+		return
+	}
+	text := *data
+	if strings.HasSuffix(text, defaultViewSuffix) {
+		text = text[:len(text)-len(defaultViewSuffix)]
+	}
 	var unmarshaled interface{}
-	if err := json.Unmarshal([]byte(*data), &unmarshaled); err != nil {
+	if err := json.Unmarshal([]byte(text), &unmarshaled); err != nil {
 		return
 	}
 	asserted := unmarshaled.(map[string]interface{})
@@ -131,8 +143,14 @@ func extract(data *string) {
 	if *data == "" {
 		return
 	}
+	var isDefaultView bool
+	text := *data
+	if strings.HasSuffix(text, defaultViewSuffix) {
+		isDefaultView = true
+		text = text[:len(text)-len(defaultViewSuffix)]
+	}
 	var unmarshaled interface{}
-	if err := json.Unmarshal([]byte(*data), &unmarshaled); err != nil {
+	if err := json.Unmarshal([]byte(text), &unmarshaled); err != nil {
 		return
 	}
 	if len(keys) == 0 {
@@ -147,12 +165,27 @@ func extract(data *string) {
 	if ok != true {
 		return
 	}
-	*data = casted
+	if isDefaultView {
+		*data = casted + defaultViewSuffix
+	} else {
+		*data = casted
+	}
 }
 
 func walk(s *genswagger.Swagger, function func(*string)) *genswagger.Swagger {
 	if s.Info != nil {
+		function(&s.Info.Title)
 		function(&s.Info.Description)
+	}
+	if s.Definitions != nil {
+		for _, definition := range s.Definitions {
+			function(&definition.Description)
+			if definition.Properties != nil {
+				for _, prop := range definition.Properties {
+					function(&prop.Description)
+				}
+			}
+		}
 	}
 	if s.Paths != nil {
 		for _, v := range s.Paths {
@@ -162,6 +195,11 @@ func walk(s *genswagger.Swagger, function func(*string)) *genswagger.Swagger {
 			}
 			if path.Get != nil {
 				function(&path.Get.Description)
+				if path.Get.Parameters != nil {
+					for _, parameter := range path.Get.Parameters {
+						function(&parameter.Description)
+					}
+				}
 			}
 			if path.Put != nil {
 				function(&path.Put.Description)
