@@ -1,6 +1,7 @@
 package multiswagger
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -106,8 +107,7 @@ func (g *Generator) Generate() (_ []string, err error) {
 		}
 
 		var mergedJSON map[string]interface{}
-		err = json.Unmarshal(rawJSON, &mergedJSON)
-		if err != nil {
+		if err := decodeJSONUsingNumber(rawJSON, &mergedJSON); err != nil {
 			return nil, err
 		}
 		mergeMapsRecursive(mergedJSON, localeJSON)
@@ -143,6 +143,13 @@ func (g *Generator) Cleanup() {
 		os.Remove(f)
 	}
 	g.genfiles = nil
+}
+
+// decodeJSONUsingNumber decodes a JSON using Number instead of float64 for a number.
+func decodeJSONUsingNumber(data []byte, v interface{}) error {
+	decoder := json.NewDecoder(bytes.NewBuffer(data))
+	decoder.UseNumber()
+	return decoder.Decode(v)
 }
 
 func mergeMapsRecursive(dest, src map[string]interface{}) {
